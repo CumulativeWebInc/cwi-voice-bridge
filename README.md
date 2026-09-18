@@ -105,7 +105,8 @@ wss.on('connection', (twilioSocket) => {
   // Outbound: feed engine/TTS audio at ANY rate; the bridge paces the wire.
   await bridge.sendAudio(ttsPcm16Chunk);
 
-  // Barge-in: stop Twilio playout immediately.
+  // Barge-in: stop Twilio playout immediately AND kill the bridge's own
+  // queued audio (cancellation boundary — late chunks can't restart it).
   bridge.sendClear();
   bridge.sendMark('playback-stopped');
 
@@ -190,7 +191,12 @@ Inbound Twilio messages handled: `connected`, `start`, `media`, `mark`,
 `stop`. Outbound messages sent: `media` (160-byte μ-law @ 8 kHz, or
 640-byte PCM16 @ 16 kHz for Telnyx), `mark`, `clear`. Extra surface:
 `attach(ws)`, `setTelephonyCarrier()`, `sendMark(name)`, `sendClear()`,
-`onMetrics(cb)`, `getMetrics()`.
+`onMetrics(cb)`, `getMetrics()`. **Cancellation boundary:** `sendClear()`
+bumps the utterance generation, drains the paced outbound queue, and the
+pacer rejects stale-generation frames — the bridge owns the cancellation
+*mechanism*; patter's engine (VAD/policy) owns the interrupt *decision*.
+`utterance-cancelled` event, `staleUtteranceFrames` + `utteranceGeneration`
+metrics.
 
 ## Sizing math
 

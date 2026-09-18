@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Barge-in cancellation boundary (2026-09-18):** `sendClear()` now owns
+  the full cancellation — bumps a monotonically increasing utterance
+  generation, drains the bridge's paced outbound queue, drops the partial
+  reframing leftover, and emits `utterance-cancelled { generation,
+  droppedFrames }`. The outbound pacer rejects any frame tagged with a
+  stale generation, so a late TTS chunk from the cancelled utterance can
+  never restart it (counted in `staleUtteranceFrames`; generation exposed as
+  `utteranceGeneration` and in `getMetrics()`). Mechanism lives in the
+  bridge; the interrupt *decision* (VAD/policy) stays with patter's engine.
+  Found by a reader's question on the launch post — the first version of
+  `sendClear()` cleared only the carrier's playout buffer. Three new tests;
+  suite green 28/28.
 - README truth-rule pass: removed the unsourced Daily voice-pipeline
   claim; replaced unsupported audio-quality assertions ("fine for
   voice", "transparent in our tests") with explicit "unproven / no

@@ -89,7 +89,9 @@ export class PatterTwilioBridge extends VoiceAdapter {
     this.inboundFrames = 0;
     this.outboundFrames = 0;
     this.droppedOutbound = 0;
-    this.outQueue = []; // Buffer(160) μ-law frames awaiting paced send
+    this.outQueue = []; // { gen, frame } μ-law frames awaiting paced send
+    this._utteranceGen = 0; // cancellation boundary: sendClear() bumps this
+    this.droppedStaleFrames = 0; // frames killed by a stale generation
     this._outTimer = null;
     this._playoutTimer = null;
     this._leftover16 = new Int16Array(0);
@@ -253,7 +255,9 @@ export class PatterTwilioBridge extends VoiceAdapter {
         this.wireEncoding === 'mulaw'
           ? encodeMulawBuffer(downsample16kTo8k(c))
           : pcm16ToBytes(c);
-      this.outQueue.push(wire);
+      // Tag the frame with the current utterance generation so a later
+      // sendClear() can kill it even if it arrives after the cancel.
+      this.outQueue.push({ gen: this._utteranceGen, frame: wire });
     }
     while (this.outQueue.length > this.maxOutQueueFrames) {
       this.outQueue.shift();
@@ -269,12 +273,18 @@ export class PatterTwilioBridge extends VoiceAdapter {
     // sendAudio(), the wire sees exactly 1x realtime. Ever.
     this._outTimer = setInterval(() => {
       if (this.closed || !this.ws || this.ws.readyState !== 1) return;
-      const frame = this.outQueue.shift();
-      if (!frame) return;
+      // Drop stale-generation frames: the utterance they belong to was
+      // cancelled by sendClear(). A late TTS chunk can never restart it.
+      let entry = this.outQueue.shift();
+      while (entry && entry.gen !== this._utteranceGen) {
+        this.droppedStaleFrames++;
+        entry = this.outQueue.shift();
+      }
+      if (!entry) return;
       const msg = {
         event: 'media',
         streamSid: this.streamSid,
-        media: { payload: frame.toString('base64') },
+        media: { payload: entry.frame.toString('base64') },
       };
       this.ws.send(JSON.stringify(msg));
       this.outboundFrames++;
@@ -288,11 +298,29 @@ export class PatterTwilioBridge extends VoiceAdapter {
     }
   }
 
-  /** Clear Twilio's playout buffer (barge-in: stop what's playing, now). */
+  /**
+   * Barge-in / utterance cancellation. Clears Twilio's playout buffer AND
+   * the bridge's own paced outbound queue, then bumps the utterance
+   * generation so any late TTS chunk from the cancelled utterance is
+   * rejected by the pacer instead of being queued and played. The bridge
+   * owns the cancellation *mechanism*; patter's engine (VAD/policy) owns
+   * the *decision* to interrupt.
+   */
   sendClear() {
+    this._utteranceGen++;
+    const drained = this.outQueue.length;
+    this.outQueue = [];
+    this.droppedStaleFrames += drained;
+    this._sendLeftover = new Int16Array(0); // drop the partial chunk too
+    this._emit('utterance-cancelled', { generation: this._utteranceGen, droppedFrames: drained });
     if (this.ws?.readyState === 1) {
       this.ws.send(JSON.stringify({ event: 'clear', streamSid: this.streamSid }));
     }
+  }
+
+  /** Current utterance generation (cancellation boundary). */
+  get utteranceGeneration() {
+    return this._utteranceGen;
   }
 
   onAudio(cb) {
@@ -323,6 +351,8 @@ export class PatterTwilioBridge extends VoiceAdapter {
       inboundFrames: this.inboundFrames,
       outboundFrames: this.outboundFrames,
       droppedOutboundFrames: this.droppedOutbound,
+      staleUtteranceFrames: this.droppedStaleFrames,
+      utteranceGeneration: this._utteranceGen,
       outQueueFrames: this.outQueue.length,
       jitterMs: s.jitterEstimateMs,
       playoutDelayMs: s.targetDelayMs,

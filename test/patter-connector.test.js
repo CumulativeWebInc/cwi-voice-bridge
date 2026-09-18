@@ -155,6 +155,65 @@ describe('PatterTwilioBridge (Twilio Media Streams protocol)', () => {
     await b.close();
   });
 
+  it('sendClear() drains the local queue — cancelled utterance never plays', async () => {
+    const { sock, b } = attachStartedBridge();
+    const tone = new Int16Array(FS).fill(1000);
+    await b.sendAudio(tone);
+    await b.sendAudio(tone);
+    await b.sendAudio(tone);
+    assert.equal(b.outQueue.length, 3, 'three frames queued before clear');
+    const cancelled = [];
+    b.onEvent((name, data) => {
+      if (name === 'utterance-cancelled') cancelled.push(data);
+    });
+    b.sendClear();
+    assert.equal(b.outQueue.length, 0, 'local queue drained by sendClear');
+    assert.equal(b.utteranceGeneration, 1, 'generation bumped');
+    assert.equal(cancelled.length, 1, 'utterance-cancelled event fired');
+    assert.equal(cancelled[0].droppedFrames, 3);
+    // Let the 20 ms pacer run: nothing but the 'clear' wire event may leave.
+    await sleep(60);
+    const media = sock.sent.filter((m) => JSON.parse(m).event === 'media');
+    assert.equal(media.length, 0, 'no media frames from the cancelled utterance');
+    const clear = sock.sent.find((m) => JSON.parse(m).event === 'clear');
+    assert.ok(clear, 'carrier clear event still sent');
+    const m = b.getMetrics();
+    assert.equal(m.staleUtteranceFrames, 3);
+    assert.equal(m.utteranceGeneration, 1);
+    await b.close();
+  });
+
+  it('pacer rejects late chunks tagged with a stale generation', async () => {
+    const { sock, b } = attachStartedBridge();
+    const tone = new Int16Array(FS).fill(1000);
+    await b.sendAudio(tone); // gen 0
+    // Simulate a late chunk racing past sendClear(): it carries gen 0.
+    b._utteranceGen = 1;
+    await sleep(60); // pacer runs on gen 0 queue, then generation moves
+    const mediaBefore = sock.sent.filter((m) => JSON.parse(m).event === 'media').length;
+    // Now a truly stale frame sneaks into the queue after the boundary.
+    b.outQueue.push({ gen: 0, frame: Buffer.alloc(160) });
+    await sleep(60);
+    const mediaAfter = sock.sent.filter((m) => JSON.parse(m).event === 'media').length;
+    assert.equal(mediaAfter, mediaBefore, 'stale-generation frame never reaches the wire');
+    assert.ok(b.droppedStaleFrames > 0, 'stale frame counted');
+    await b.close();
+  });
+
+  it('audio queued after sendClear() plays under the new generation', async () => {
+    const { sock, b } = attachStartedBridge();
+    const tone = new Int16Array(FS).fill(1000);
+    await b.sendAudio(tone);
+    b.sendClear();
+    assert.equal(b.utteranceGeneration, 1);
+    await b.sendAudio(tone); // new utterance, gen 1
+    await sleep(60);
+    const media = sock.sent.filter((m) => JSON.parse(m).event === 'media');
+    assert.ok(media.length >= 1, 'post-clear utterance plays normally');
+    assert.equal(b.droppedStaleFrames, 1, 'only the pre-clear frame was stale-dropped');
+    await b.close();
+  });
+
   it('getMetrics returns the patter-style per-call snapshot', async () => {
     const { sock, b } = attachStartedBridge();
     sock.emitMsg({
