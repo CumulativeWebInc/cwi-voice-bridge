@@ -231,9 +231,6 @@ or review by these projects is claimed.
   from Twilio's public docs; the core lesson is architectural — *the
   playout clock must follow the audio clock, never the network clock* —
   which is exactly what the outbound pacer enforces.
-- **Daily**: Daily's voice-pipeline guidance stresses the same separation —
-  transport pacing decoupled from model inference pacing. Our bridge is
-  the concrete mechanism: inference may burst, transport may not.
 
 ## Measured results
 
@@ -269,8 +266,10 @@ Tests: **25/25 green** (`npm test`), including a paced-wire assertion
   listing Plivo alongside Twilio as a supported carrier). Verify against
   Plivo's XML/media docs before production.
 - **A4 — resampling.** 8↔16 kHz conversion is linear
-  interpolation/decimation. Fine for voice; not a substitute for a
-  polyphase resampler (see Roadmap).
+  interpolation/decimation. No audio-quality test covers the resampler
+  (codec tests assert only μ-law companding tolerance), so speech
+  transparency is **unproven** — a polyphase resampler is the production
+  upgrade (see Roadmap).
 
 ## Limitations
 
@@ -280,8 +279,8 @@ Tests: **25/25 green** (`npm test`), including a paced-wire assertion
   raw socket to the internet. The code handles no credentials and must
   not be given any.
 - No codec: raw PCM16 only. No Opus/Speex path.
-- Time-stretch is linear resampling, not WSOLA — audible on music, fine
-  on speech at ±10%.
+- Time-stretch is linear resampling, not WSOLA — artifacts are expected
+  on music; speech quality at ±10% is unmeasured.
 - Energy-gated VAD (RMS threshold), not a neural VAD — misclassifies
   quiet speech in noise.
 - The drain guard detects *consumption* rate; it cannot fix a far-end
@@ -296,8 +295,10 @@ Tests: **25/25 green** (`npm test`), including a paced-wire assertion
 Best-in-class techniques not yet shipped, with the specific reason:
 
 1. **WSOLA time-stretch** (NetEQ-grade) — needs a pitch detector and
-   2–3× the DSP code; linear resampling ships first because ±10% on
-   speech is already transparent in our tests.
+   2–3× the DSP code; linear resampling ships first as the $0 path with
+   the smallest footprint. There is no listening test or objective
+   quality score behind it, so WSOLA is the quality upgrade, not
+   optional polish.
 2. **Neural VAD** (e.g. Silero) — adds a model dependency and per-frame
    inference cost; energy VAD is the $0 path that works for the demo
    line. Swap-in point: `_isVoiced()`.
