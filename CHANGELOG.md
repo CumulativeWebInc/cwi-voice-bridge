@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- README truth-rule pass: removed the unsourced Daily voice-pipeline
+  claim; replaced unsupported audio-quality assertions ("fine for
+  voice", "transparent in our tests") with explicit "unproven / no
+  quality test exists" statements. No code changes.
+
 ## 1.0.0 — 2026-09-18
 
 Initial public release.
