@@ -1,0 +1,36 @@
+{
+  "bin": {
+    "cwi-voice-demo": "./demo/loopback.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "description": "Open-source real-time voice adapter for AI agents: WebSocket transport, NetEQ-inspired adaptive jitter buffer with a playout-drain guard, and Twilio Media Streams interop.",
+  "engines": {
+    "node": ">=18"
+  },
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "keywords": [
+    "voice",
+    "webrtc",
+    "jitter-buffer",
+    "twilio",
+    "ai-agents",
+    "realtime-audio"
+  ],
+  "license": "Apache-2.0",
+  "main": "src/index.js",
+  "name": "cwi-voice-bridge",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CumulativeWebInc/cwi-voice-bridge.git"
+  },
+  "scripts": {
+    "demo": "node demo/loopback.js",
+    "test": "node --test test/*.test.js"
+  },
+  "type": "module",
+  "version": "1.0.0"
+}
